@@ -1,0 +1,485 @@
+---
+title: "Paleobuddy overview"
+author: Bruno do Rosario Petrucci
+output: github_document
+vignette: >
+  %\VignetteIndexEntry{overview}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(dpi=300)
+```
+
+`paleobuddy` is an R package for species birth-death simulation, complete with the possibility of generating phylogenetic trees and fossil records from the results. The package offers unprecedented flexibility in the choice of speciation, extinction, and fossil sampling rates, as we will showcase in this vignette. 
+
+One of the biggest reason to write and publish a simulator is to effectively test rate estimation methods with scenarios whose true dynamics are known---others might include model adequacy tests and the study of scenarios without an analytical solution. This leads to an intuitive overview of the package: in this vignette, we will first generate a couple of useful scenarios to show use cases of the package. Then, we will discuss the choice of rates further, detailing the customization capabilities of both the birth-death and sampling functions. Finally, we will conclude going over the shortcomings of the package, including the features we plan to implement in the future. As new versions are released, this document will be updated to reflect the newest features.
+
+First we do some setup.
+
+```{r results = "hide", message = FALSE}
+# importing the package functions
+library(paleobuddy)
+```
+
+## Constant rate birth-death 
+
+Let us try the simplest possible birth-death scenario - constant speciation and extinction rates.
+
+`bd.sim` is the birth-death simulator in the package. We use it to generate a group.
+
+```{r}
+# we set a seed so the results are reproducible
+set.seed(1)
+
+# set the necessary parameters
+# initial number of species
+n0 <- 1
+
+# speciation rate - approx. 1 speciation event every 4my
+# we are trying to create a big phylogeny so phytools can function better
+lambda <- 0.25
+
+# extinction rate - approx. 1 extinction event every 10my
+mu <- 0.15
+
+# maximum simulation time - species that die after this are considered extant
+tMax <- 50
+
+# run the simulation
+sim <- bd.sim(n0, lambda, mu, tMax)
+
+# take a look at the way the result is organized
+sim
+```
+
+The output of `bd.sim` is a `sim` object, a class made up of named vectors that is organized as follows
+
+  * `TE` a vector of extinction times. For an extant species, the extinction time is `NA`.
+  * `TS` a vector of speciation times. For species alive at the beginning of the simulation, the speciation time is `tMax`.
+  * `PAR` a vector of parents. The naming of species follows the order of `TE` and `TS`, i.e. if `PAR[i] == j`, the species whose speciation time is `TS[j]` generated species `i`. For species alive at the beginning of the simulation, the parent is `NA`.
+  * `EXTANT` a logical vector indicating whether a species is alive at the end of the simulation or not. Note this could be extrapolated from the information in `TE`, but we present it for practicality's sake.
+  
+We can use the function `draw.sim` to visualize the longevity of species in this simulation.
+
+```{r}
+# draw simulation
+draw.sim(sim, showLabel = FALSE)
+```
+
+Species are drawn in order of speciation time by default, though that can be altered. We omit species labels since for a high number of species that can get unruly.
+
+Using this sim object, we can generate a phylogenetic tree using `make.phylo`.
+
+```{r}
+# there are currently not many customization options for phylogenies
+phy <- make.phylo(sim)
+
+# plot it with APE - hide tip labels since there are a lot so it looks cluttered
+ape::plot.phylo(phy, show.tip.label = FALSE)
+ape::axisPhylo()
+
+# plot the molecular phylogeny
+ape::plot.phylo(ape::drop.fossil(phy), show.tip.label = FALSE)
+ape::axisPhylo()
+```
+
+From here, we could run this phylogeny through a number of inference software in the field, so as to test their accuracy and robustness. Of course this would require more trees, and larger trees, to control for stochasticity.
+
+For illustration, we create a simulation with more than 500 species, with 253 extant species.
+
+```{r}
+# set a seed
+set.seed(3)
+
+# create simulation
+# note nExtant, defining we want 200 or more extant species at the end
+sim <- bd.sim(n0, lambda, mu, tMax, nExtant = c(200, Inf))
+
+# check the number of extant species
+paste0("Number of species alive at the end of the simulation: ", 
+       sum(sim$EXTANT))
+```
+
+And we could of course get a molecular phylogeny from it.
+
+```{r}
+# might look a bit cluttered
+ape::plot.phylo(ape::drop.fossil(make.phylo(sim)), show.tip.label = FALSE)
+ape::axisPhylo()
+```
+
+## Time-dependent speciation and extinction
+
+One of the pluses of `paleobuddy` is that we can generate both fossil records and phylogenies in independent processes, both coming from the same underlying birth-death simulations. We will here use the fossil record generating functions of `paleobuddy` to generate a fossil record and prepare the output for use with PyRate (Silvestro et al 2014) and Foote's Per Capita method (Foote 2000), as an example of a workflow using paleobuddy to test inference methods.
+
+As before, start with a simulation
+
+```{r}
+# we set a seed so the results are reproducible
+set.seed(5)
+
+# set the necessary parameters
+# initial number of species
+n0 <- 1
+
+# speciation rate - it can be any function of time!
+lambda <- function(t) {
+  0.1 + 0.001*t
+}
+
+# extinction rate - also can be any function of time
+mu <- function(t) {
+  0.03 * exp(-0.01*t)
+}
+
+# maximum simulation time - species that die after this are considered extant
+tMax <- 50
+
+# run the simulation
+sim <- bd.sim(n0, lambda, mu, tMax)
+
+# check the resulting clade out
+ape::plot.phylo(make.phylo(sim), show.tip.label = FALSE)
+ape::axisPhylo()
+```
+
+A lot of species! We can then create a fossil record from this group.
+
+```{r}
+# again set a seed
+set.seed(1)
+
+# set the sampling rate
+# using a simple case - there will be on average T occurrences,
+# per species, where T is the species duration
+rho <- 1
+
+# bins - used to represent the uncertainty in fossil occurrence times
+bins <- seq(tMax, 0, -1)
+# this is a simple 1my bin vector, but one could use the GSA timescale
+# or something random, etc
+
+# run the sampling simulation only for the first 10 species for brevity's sake
+# returnAll = TRUE makes it so the occurrences are returned as binned as well
+# (e.g. an occurrence at time 42.34 is returned as between 42 and 41)
+fossils <- suppressMessages(sample.clade(sim = sim, rho = rho, 
+                                      tMax = tMax, S = 1:10, 
+                                      bins = bins, returnAll = TRUE))
+# suppressing messages - the message is to inform the user how
+# many speciesleft no fossils. In this case, it was 0
+
+# take a look at how the output is organized
+head(fossils)
+```
+
+The output of `sample.clade` is a data frame organized as follows
+
+* `Species` the species name, usually `t` followed by the number in the order it is organized on `sim`.
+* `Extant` whether the species is extant or not.
+* `SampT` the true occurrence time of a fossil occurrence. Returned if `returnTrue` and/or `returnAll` are set to `TRUE`.
+* `MinT` the lower bound of the geologic range the fossil is found. The range vectors is an input, `bins`, used to simulate the granularity of the fossil record.
+* `MaxT` the upper bound of the geologic range the fossil is found. The range columns are provided if `returnTRUE` is set to `FALSE` or if `returnAll` is set to `TRUE`.
+
+We can visualize the fossil record of this group using `draw.sim` as well.
+
+```{r}
+# take only first 5 species with head
+simHead <- head(sim, 10)
+
+# draw longevities with fossil time points
+suppressMessages(draw.sim(simHead, fossils = fossils))
+```
+
+We can also visualize the fossil ranges if we take away the `SampT` column, which is used by default if the data frame has it.
+
+```{r}
+# draw longevities with fossil time ranges
+suppressMessages(draw.sim(simHead, fossils = fossils[, -3]))
+```
+
+This fossil record's data frame organization allows for easy evaluation of its components, and is close to ready for use in PyRate, one of the most widely used birth-death rates estimators in the field currently. To make it ready we must manipulate the `Extant` column, left like this for clarity. In PyRate, that column must be `status`, with extant species marked `extant` and extinct species marked `extinct`.
+
+```{r}
+# make a copy
+pFossils <- fossils
+
+# change the extant column
+pFossils["Extant"][pFossils["Extant"] == FALSE] = "extant"
+pFossils["Extant"][pFossils["Extant"] == TRUE] = "extinct"
+
+# change column names
+colnames(pFossils) <- c("Species", "Status", "min_age", "max_age")
+
+# check it out
+head(pFossils)
+```
+
+This data frame could be directly dropped in PyRate for rate estimations. 
+
+We can also use `RMark` or other simpler methods to check estimations. Let us write a quick function applying Foote's Per Capita method.
+
+```{r}
+per.capita <- function(faBins, laBins, bins) {
+  # create vectors to hold species that were born before and die in interval i,
+  # species who were born in i and die later,
+  # and species who were born before and die later
+  NbL <- NFt <- Nbt <- rep(0, length(bins))
+  
+  # for each interval
+  for (i in 1:length(bins)) {
+    # number of species that were already around before i and are not seen again
+    NbL[i] <- sum(faBins > bins[i] & laBins == bins[i])
+    
+    # number of species that were first seen in i and are seen later
+    NFt[i] <- sum(faBins == bins[i] & laBins < bins[i])
+    
+    # number of species that were first seen before i and are seen after i
+    Nbt[i] <- sum(faBins > bins[i] & laBins < bins[i])
+  }
+  
+  # calculate the total rates
+  p <- log((NFt + Nbt) / Nbt)
+  q <- log((NbL + Nbt) / Nbt)
+  return(list(p = p, q = q))
+}
+```
+
+To apply this function, we need to manipulate `fossils` a little bit
+
+```{r}
+# get the species names
+ids <- unique(fossils$Species)
+
+# get the first appearance bins - the first time in bins where the fossil was seen (lower bound)
+faBins <- unlist(lapply(ids, function(i) max(fossils$MaxT[fossils$Species == i])))
+
+# get the last appearance bins - last time in bins where the fossil was seen (upper bound)
+laBins <- unlist(lapply(ids, function(i) min(fossils$MinT[fossils$Species == i])))
+
+# create the bins vector we have been using
+bins <- seq(tMax, 0, -0.1)
+# note this has a high resolution, the actual stratigraphic ranges are much coarser
+
+# get the estimates
+pc <- per.capita(faBins, laBins, bins)
+```
+
+This method assumes perfect sampling, so it will not be a good estimate, but it is nevertheless a good example of `sample.clade` use. One could then clean up `pc` and plot the rates, but for sampling as imperfect as we have here it will not be a good estimate.
+
+Other examples of methods using only the fossil record are Capture-Mark-Recapture (Liow & Nichols 2010) and the Alroy 3-timer (Alroy 2014). One could also use `paleobuddy` to test methods that integrate fossil records and phylogenies, such as the Fossilized birth-death model (Stadler et al 2010, Heath et al 2014). While a thorough test of these methods is not in the scope of this vignette, we believe to have shown the workflow required for such tests.
+
+## paleobuddy's flexibility
+
+While showing use cases of the package is useful, we should also spend some time detailing the possible customization options in `bd.sim` and `sample.clade`.
+
+We have already shown speciation and extinction rates can be any function of time, or constant numbers. Let us check some other possibilities out.
+
+```{r}
+# set a seed
+set.seed(2)
+
+# parameters to set things up
+n0 <- 1
+tMax <- 20
+
+# speciation can be dependent on a time-series variable as well as time
+lambda <- function(t, env) {
+  0.01 * t + 0.01*exp(0.01*env)
+}
+
+# let us use the package's temperature data
+data(temp)
+# this could instead  be data(co2), the other environmental
+# data frame supplied by paleobuddy
+
+# we can make extinction be age-dependent by creating a shape parameter
+mu <- 10
+mShape <- 0.5
+# this will make it so species durations are distributed
+# as a Weibull with scale 10 and shape 2
+
+# run the simulation
+# we pass the shape and environmental parameters
+sim <- suppressMessages(bd.sim(n0, lambda, mu, tMax, 
+                               mShape = mShape, envL = temp))
+# note that lShape and envM also exist
+# the defaults for all of these customization options is NULL
+
+# check out the phylogeny
+ape::plot.phylo(make.phylo(sim), show.tip.label = FALSE)
+ape::axisPhylo()
+```
+
+So as to avoid repetition, we will not run simulations for the next possibilities, but we will list them
+
+```{r}
+# speciation may be a step function, presented
+# as a rates vector and a shift times vector
+lList <- c(0.1, 0.2, 0.05)
+lShifts <- c(0, 10, 15)
+# lShifts could also be c(tMax, tMax - 10, tMax - 15) for identical results
+
+# make.rate is the function bd.sim calls to create a 
+# ratem but we will use it here to see how it looks
+lambda <- make.rate(lList, tMax = 20, rateShifts = lShifts)
+t <- seq(0, 20, 0.1)
+plot(t, rev(lambda(t)), type = 'l', main = "Step function speciation rate",
+     xlab = "Time (Mya)", ylab = "Speciation rate", xlim = c(20, 0))
+```
+```{r}
+# it is not possible to combine the lambda(t, env) and lList methods listed above
+# but we can create a step function dependent on environmental data with ifelse
+mu_t <- function(t, env) {
+  ifelse(t < 10, env,
+         ifelse(t < 15, env * 2, env / 2))
+}
+
+# pass it to make.rate with environmental data
+mu <- make.rate(mu_t, tMax = tMax, envRate = temp)
+plot(t, rev(mu(t)), type = 'l', main = "Environmental step function extinction rate",
+     xlab = "Time (Mya)", ylab = "Rate", xlim = c(20, 0))
+```
+
+Note all these customization options could serve for a Weibull scale as well, if the user wishes to have age-dependent speciation and/or extinction. The possibility of age-dependency with time-varying rates is, to our knowledge, exclusive to `paleobuddy`.
+
+```{r eval=FALSE}
+# set seed again
+set.seed(1)
+
+# age-dependent speciation with a step function
+lList <- c(10, 5, 12)
+lShifts <- c(0, 10, 15)
+lShape <- 2
+
+# age-dependent extinction with a step function of an environmental variable
+q <- function(t, env) {
+  ifelse(t < 10, 2*env,
+         ifelse(t < 15, 1.4*env, env / 2))
+}
+
+# note shape can be time-dependent as well, though
+# we advise for variation not to be too abrupt due
+# to computational issues
+mShape <- function(t) {
+  return(1.2 + 0.025*t)
+}
+
+# run the simulation
+sim <- suppressMessages(bd.sim(n0, lList, q, tMax, lShape = lShape, 
+                               mShape = mShape, 
+                               envM = temp, lShifts = lShifts))
+
+# check out the phylogeny
+ape::plot.phylo(make.phylo(sim), show.tip.label = FALSE)
+```
+
+We set this to not run because it takes a long time - both because of the high speciation and because the method of creating a step function rate with `shifts` and `lists` takes a long time to integrate. It is however a good illustration of the power of `paleobuddy`s flexibility. 
+
+None of the scenarios we have listed here are specific to speciation or extinction - one can mix and match any combination listed here for either rate. 
+
+In the case of sampling rates, it is almost the case that any scenario available to speciation/extinction is available to sampling. We do not allow for a `shape` parameter since the Weibull distribution is not frequently used in the literature for age-dependent sampling. Instead, we allow for the user to supply a probability distribution describing how occurrences are distributed along a species age, as follows
+
+```{r}
+# as an example, we will use a PERT distribution, 
+# a hat-shaped distribution used in PyRate
+
+# preservation function
+dPERT <- function(t, s, e, sp, a = 3, b = 3, log = FALSE) {
+
+  # check if it is a valid PERT
+  if (e >= s) {
+    message("There is no PERT with e >= s")
+    return(rep(NaN, times = length(t)))
+  }
+
+  # find the valid and invalid times
+  id1 <- which(t <= e | t >= s)
+  id2 <- which(!(t <= e | t >= s))
+  t <- t[id2]
+
+  # initialize result vector
+  res <- vector()
+
+  # if user wants a log function
+  if (log) {
+    # invalid times get -Inf
+    res[id1] <- -Inf
+
+    # valid times calculated with log
+    res[id2] <- log(((s - t) ^ 2)*((-e + t) ^ 2)/((s - e) ^ 5*beta(a,b)))
+  }
+  
+  # otherwise
+  else{
+    res[id1] <- 0
+
+    res[id2] <- ((s - t) ^ 2)*((-e + t) ^ 2)/((s - e) ^ 5*beta(a,b))
+  }
+
+  return(res)
+}
+
+# set seed
+set.seed(1)
+
+# generate a quick simulation
+sim <- bd.sim(n0, lambda = 0.1, mu = 0.05, tMax = 20)
+
+# sample for the first 10 species
+fossils <- suppressMessages(sample.clade(sim = sim, rho = 3, 
+                                      tMax = 20, adFun = dPERT))
+# here we return true times of fossil occurrences
+
+# draw longevities with fossil occurrences
+draw.sim(sim, fossils = fossils)
+```
+
+Note how occurrences cluster in the middle of a species' duration, as expected since the PERT is a hat-shaped distribution.
+
+For more details and examples of age-dependent models, check out `?sample.clade`. Even if an `adFun` argument is supplied for age dependency, the average sampling rate `rho` may have the same flexibility as speciation and extinction rates in the birth-death functions. We omit examples of other sampling rate options since they are just the same as above, excluding shape parameters.
+
+## Conclusion
+
+For completion, we present a final list of the functions of the package
+
+* `bd.sim` birth-death simulator. Rates can be constant, time dependent, time and environmentally dependent, or a list of numbers. User can supply a shape parameter to make rate a Weibull scale.
+* `make.phylo` creates a `phylo` object from the `ape` package.
+* `sample.clade` simulates fossil samples from a set of species, usually outputted from `bd.sim`. Sampling rate can be anything a speciation or extinction rate can be, without the option of a shape parameter. The user may instead supply a distribution of occurrences across a species age, so as to simulate age-dependency in sampling with more flexibility.
+* `draw.sim` function to draw longevities of the species in a `sim` object and, optionally, fossil occurrences of these species.
+* `rexp.var` exponential and Weibull waiting time drawing with variable rates. Used by `bd.sim` and `sample.clade`.
+* `find.lineages` separates a group returned by the `bd.sim` function, or similar, by the species that started the simulation as mothers of each group. Allows for an optional argument, a list of numbers, and if supplied returns the groups generated by those species instead. A quick example:
+
+```{r}
+# set a seed 
+set.seed(1)
+
+# simple simulation, starting with more than one species
+sim <- bd.sim(n0 = 2, lambda = 0.1, mu = 0, tMax = 20, nFinal = c(20, Inf))
+
+# separate the lineages
+clades <- find.lineages(sim)
+
+# plot each phylogeny
+
+# clade 1
+ape::plot.phylo(make.phylo(clades$clade_1$sim), show.tip.label = FALSE)
+
+# clade 2
+ape::plot.phylo(make.phylo(clades$clade_2$sim), show.tip.label = FALSE)
+```
+
+* `phylo.to.sim` creates a `sim` object from a phylogeny following the APE `phylo` class format (Paradis et al 2004). Can be used to integrate paleobuddy with other packages that output phylogenies. Note that the user must supply some optional arguments to allow for this; most importantly the information of each species' mother, since this is ambiguous from a bifurcating phylogeny.
+* `make.rate` creates a function of time from the customization options presented above - vector of numbers and vector of shift times, function of time and environment and an environment matrix, etc. Used by `bd.sim` and `sample.clade` to detect when the given rates are constant, and create the rates to pass to the helper functions.
+* `var.rate.div` calculates the expected diversity from a variable rate birth-death process and a time period.
+* `binner` given occurrence times and time bins, returns the number of occurrences in each bin.
+* Finally, there are a number of generics and methods for the `sim` class, like `print.sim` and `plot.sim`. See `?sim` for a detailed list.
+
+While the package is robust and flexible, it is useful to spend a little time discussing the shortcomings and planned features.
+
+* Currently, the possibility of using a time-varying Weibull shape is implemented, but failing certain tests when shape varies too much or is too low (see `?bd.sim` for a summary of issues). This seems to be due to the nature of R numerical integration, so we need to find workarounds for testing this feature more accurately.
+* The method of generating step functions from rate and shift times vectors is currently very slow (see `?make.rate`), and we plan on looking for more efficient alternatives. Meanwhile, the user might prefer the creation of step functions using `ifelse` when prioritizing efficiency.
+* A couple of diversification scenarios are very well established in the literature and therefore are planned for future versions of the package: trait-dependent diversification, diversity-dependent rates, anagenesis/bifurcating speciation, etc.
+
+While there are a number of areas where `paleobuddy` can improve, it is clear that the package presents unprecedented flexibility on diversification, fossil record, and phylogeny generation. It will therefore be an impactful tool in the exploration of complex evolutionary scenarios.
