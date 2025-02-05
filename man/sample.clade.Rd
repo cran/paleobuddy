@@ -2,7 +2,7 @@
 % Please edit documentation in R/sample.clade.R
 \name{sample.clade}
 \alias{sample.clade}
-\title{General rate species sampling}
+\title{General rate fossil sampling}
 \usage{
 sample.clade(
   sim,
@@ -28,12 +28,13 @@ be a \code{numeric} describing a constant rate, a \code{function(t)}
 describing the variation in sampling over time \code{t}, a 
 \code{function(t, env)} describing the variation in sampling over time 
 following both time AND a time-series, usually an environmental variable 
-(see \code{envR}), or a \code{vector} containing rates that correspond to 
-each rate between sampling rate shift times times (see \code{rShifts}). If 
-\code{adFun} is supplied, it will be used to find the number of occurrences 
-during the species duration, and a normalized \code{rho*adFun} will 
-determine their distribution along the species duration. Note that 
-\code{rho} should always be greater than or equal to zero.}
+(see \code{envR}), or a \code{vector} of rates, corresponding to each rate
+between sampling rate shift times times (see \code{rShifts}), describing an 
+episodic model of fossil sampling. If \code{adFun} is supplied, it will be 
+used to find the number of occurrences during the species duration, and a 
+normalized \code{rho*adFun} will determine their distribution along the 
+species duration. Note that \code{rho} should always be greater than or 
+equal to zero.}
 
 \item{tMax}{The maximum simulation time, used by \code{rexp.var}. A sampling
 time greater than \code{tMax} would mean the occurrence is sampled after the
@@ -115,10 +116,23 @@ function of time and a time-series (usually environmental) variable, or (4)
 a vector of numbers (rates in a step function). Allows for age-dependent 
 sampling with a parameter for a distribution representing the expected 
 occurrence number over a species duration. Allows for further flexibility in
-rates by a shift times vector and environmental matrix parameters. 
+rates by a shift times vector and environmental matrix parameters. Finally,
+allows for the simulation of trait-dependent fossil sampling when trait
+value information is supplied.
+}
+\details{
 Optionally takes a vector of time bins representing geologic periods, if the
 user wishes occurrence times to be represented as a range instead of true 
 points.
+
+The age-dependent preservation function assumes that all extant
+species at the end of the simulations have \code{TE = 0} (i.e., the function
+assumes all extant species got extinct exaclty when the simulation ended.
+This might create distortion for some \code{adFun} - especially in the case
+of bell-shaped functions. As interpretations of what age-dependent
+preservation mean to species alive at the end of the simulation, we
+recommend users to implement their own preservation functions for the
+species that are extant at the end of the simulation.
 }
 \examples{
 
@@ -145,7 +159,7 @@ fossils <- sample.clade(sim, rho, tMax = 10,
                         bins = bins, returnTrue = FALSE)
 
 # draw simulation with fossil occurrences as ranges
-draw.sim(sim, fossils = fossils)
+draw.sim(sim, fossils = fossils, fossilsFormat = "ranges")
 
 ###
 # sampling can be any function of time 
@@ -176,11 +190,13 @@ fossils <- sample.clade(sim, rho, tMax = 10,
                         bins = bins, returnTrue = FALSE)
 
 # draw simulation with fossil occurrences as ranges
-draw.sim(sim, fossils = fossils)
+draw.sim(sim, fossils = fossils, fossilsFormat = "ranges")
 
 ###
 # now we can try a step function rate
+# not running because it takes a long time
 
+\dontrun{
 # set seed
 set.seed(1)
 
@@ -212,7 +228,8 @@ fossils <- sample.clade(sim, rho = rList, rShifts = rShifts, tMax = 10,
                         bins = bins, returnTrue = FALSE)
 
 # draw simulation with fossil occurrences as ranges
-draw.sim(sim, fossils = fossils)
+draw.sim(sim, fossils = fossils, fossilsFormat = "ranges")
+}
 
 ###
 # finally, sample.clade also accepts an environmental variable
@@ -322,8 +339,8 @@ fossils <- sample.clade(sim, rho, tMax = 10, adFun = dPERT, bins = bins,
 draw.sim(sim, fossils = fossils)
 # the warning is to let you know the ranges won't be used
 
-# and also as ranges - we take out the column with true time points
-draw.sim(sim, fossils = fossils[, -3])
+# and also as ranges
+draw.sim(sim, fossils = fossils, fossilsFormat = "ranges")
 
 ###
 # we can have more parameters on adFun
@@ -403,7 +420,7 @@ fossils <- sample.clade(sim, rho, tMax = 10, S = 1, adFun = dTRI,
 # of age (a given percentile of the age, for instance) - see below
 
 # draw simulation with fossil occurrences as ranges
-draw.sim(sim, fossils = fossils)
+draw.sim(sim, fossils = fossils, fossilsFormat = "ranges")
 
 ###
 # we can also have a hat-shaped increase through the duration of a species
@@ -549,7 +566,7 @@ fossils <- sample.clade(sim, rho, tMax = 10, adFun = dTRImod2, bins = bins,
                         returnTrue = FALSE)
 
 # draw simulation with fossil occurrences as time ranges
-draw.sim(sim, fossils = fossils)
+draw.sim(sim, fossils = fossils, fossilsFormat = "ranges")
 
 ###
 # we can also have a mix of age-independent and age-dependent
@@ -640,7 +657,7 @@ fossils <- sample.clade(sim, rho, tMax = 10, adFun = dPERTAndUniform,
                         bins = bins, returnTrue = FALSE)
 
 # draw simulation with fossil occurrences as ranges
-draw.sim(sim, fossils = fossils)
+draw.sim(sim, fossils = fossils, fossilsFormat = "ranges")
 
 # note how occurrences cluster close to the speciation time of
 # species 1, but not its extinction time, since around 5mya

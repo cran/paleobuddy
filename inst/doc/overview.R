@@ -24,7 +24,7 @@ mu <- 0.15
 tMax <- 50
 
 # run the simulation
-sim <- bd.sim(n0, lambda, mu, tMax)
+sim <- bd.sim(n0, lambda, mu, tMax = tMax)
 
 # take a look at the way the result is organized
 sim
@@ -51,7 +51,7 @@ set.seed(3)
 
 # create simulation
 # note nExtant, defining we want 200 or more extant species at the end
-sim <- bd.sim(n0, lambda, mu, tMax, nExtant = c(200, Inf))
+sim <- bd.sim(n0, lambda, mu, tMax = tMax, nExtant = c(200, Inf))
 
 # check the number of extant species
 paste0("Number of species alive at the end of the simulation: ", 
@@ -84,7 +84,7 @@ mu <- function(t) {
 tMax <- 50
 
 # run the simulation
-sim <- bd.sim(n0, lambda, mu, tMax)
+sim <- bd.sim(n0, lambda, mu, tMax = tMax)
 
 # check the resulting clade out
 ape::plot.phylo(make.phylo(sim), show.tip.label = FALSE)
@@ -125,11 +125,11 @@ suppressMessages(draw.sim(simHead, fossils = fossils))
 
 ## -----------------------------------------------------------------------------
 # draw longevities with fossil time ranges
-suppressMessages(draw.sim(simHead, fossils = fossils[, -3]))
+suppressMessages(draw.sim(simHead, fossils = fossils[, -3], fossilsFormat = "ranges"))
 
 ## -----------------------------------------------------------------------------
 # make a copy
-pFossils <- fossils
+pFossils <- fossils[, -3]
 
 # change the extant column
 pFossils["Extant"][pFossils["Extant"] == FALSE] = "extant"
@@ -167,6 +167,19 @@ per.capita <- function(faBins, laBins, bins) {
 }
 
 ## -----------------------------------------------------------------------------
+set.seed(1)
+
+# constant lambda and mu
+lambda <- 0.15
+mu <- 0.05
+
+# nFinal means there will be at least 100 species in the simulation
+sim <- bd.sim(n0, lambda, mu, tMax, nFinal = c(100, Inf))
+
+# sample--note the higher rho, since this method relies strongly on perfect sampling
+fossils <- suppressMessages(sample.clade(sim, rho = 10, tMax, bins = bins, returnTrue = FALSE))
+
+## -----------------------------------------------------------------------------
 # get the species names
 ids <- unique(fossils$Species)
 
@@ -176,12 +189,19 @@ faBins <- unlist(lapply(ids, function(i) max(fossils$MaxT[fossils$Species == i])
 # get the last appearance bins - last time in bins where the fossil was seen (upper bound)
 laBins <- unlist(lapply(ids, function(i) min(fossils$MinT[fossils$Species == i])))
 
-# create the bins vector we have been using
-bins <- seq(tMax, 0, -0.1)
-# note this has a high resolution, the actual stratigraphic ranges are much coarser
-
 # get the estimates
 pc <- per.capita(faBins, laBins, bins)
+
+# get a mean for each rate
+print(paste0("Speciation estimate: ", mean(pc$p[is.finite(pc$p)], na.rm = TRUE)))
+print(paste0("Extinction estimate: ", mean(pc$q[is.finite(pc$q)], na.rm = TRUE)))
+
+# and plots
+plot(x = rev(bins), y = pc$p, type = "l", xlab = "Time (Mya)", ylab = "Speciation rate")
+abline(h = lambda)
+
+plot(x = rev(bins), y = pc$q, type = "l", xlab = "Time (Mya)", ylab = "Extinction rate")
+abline(h = mu)
 
 ## -----------------------------------------------------------------------------
 # set a seed
@@ -209,7 +229,7 @@ mShape <- 0.5
 
 # run the simulation
 # we pass the shape and environmental parameters
-sim <- suppressMessages(bd.sim(n0, lambda, mu, tMax, 
+sim <- suppressMessages(bd.sim(n0, lambda, mu, tMax = tMax, 
                                mShape = mShape, envL = temp))
 # note that lShape and envM also exist
 # the defaults for all of these customization options is NULL
@@ -246,34 +266,34 @@ plot(t, rev(mu(t)), type = 'l', main = "Environmental step function extinction r
      xlab = "Time (Mya)", ylab = "Rate", xlim = c(20, 0))
 
 ## ----eval=FALSE---------------------------------------------------------------
-#  # set seed again
-#  set.seed(1)
-#  
-#  # age-dependent speciation with a step function
-#  lList <- c(10, 5, 12)
-#  lShifts <- c(0, 10, 15)
-#  lShape <- 2
-#  
-#  # age-dependent extinction with a step function of an environmental variable
-#  q <- function(t, env) {
-#    ifelse(t < 10, 2*env,
-#           ifelse(t < 15, 1.4*env, env / 2))
-#  }
-#  
-#  # note shape can be time-dependent as well, though
-#  # we advise for variation not to be too abrupt due
-#  # to computational issues
-#  mShape <- function(t) {
-#    return(1.2 + 0.025*t)
-#  }
-#  
-#  # run the simulation
-#  sim <- suppressMessages(bd.sim(n0, lList, q, tMax, lShape = lShape,
-#                                 mShape = mShape,
-#                                 envM = temp, lShifts = lShifts))
-#  
-#  # check out the phylogeny
-#  ape::plot.phylo(make.phylo(sim), show.tip.label = FALSE)
+# # set seed again
+# set.seed(1)
+# 
+# # age-dependent speciation with a step function
+# lList <- c(10, 5, 12)
+# lShifts <- c(0, 10, 15)
+# lShape <- 2
+# 
+# # age-dependent extinction with a step function of an environmental variable
+# q <- function(t, env) {
+#   ifelse(t < 10, 2*env,
+#          ifelse(t < 15, 1.4*env, env / 2))
+# }
+# 
+# # note shape can be time-dependent as well, though
+# # we advise for variation not to be too abrupt due
+# # to computational issues
+# mShape <- function(t) {
+#   return(1.2 + 0.025*t)
+# }
+# 
+# # run the simulation
+# sim <- suppressMessages(bd.sim(n0, lList, q, tMax = tMax, lShape = lShape,
+#                                mShape = mShape,
+#                                envM = temp, lShifts = lShifts))
+# 
+# # check out the phylogeny
+# ape::plot.phylo(make.phylo(sim), show.tip.label = FALSE)
 
 ## -----------------------------------------------------------------------------
 # as an example, we will use a PERT distribution, 
@@ -328,6 +348,155 @@ fossils <- suppressMessages(sample.clade(sim = sim, rho = 3,
 
 # draw longevities with fossil occurrences
 draw.sim(sim, fossils = fossils)
+
+## ----eval=FALSE---------------------------------------------------------------
+# ## setup
+# # set seed
+# set.seed(123)
+# 
+# # initial number of species
+# n0 <- 1
+# 
+# # number of extant species
+# tMax <- 10
+# 
+# # lambda varies with absolute time (exponential decay)
+# lambda <- function(t) {
+#   1 + exp(-t/2)
+# }
+# 
+# # mu will vary with species age and environmental variables
+# data(co2)
+# data(temp)
+# 
+# # its scale will depend on CO2, except for a mass extinction event
+# scale <- function(t, env) {
+#   ifelse(t < 10, env/20,
+#          ifelse(t < 11, 1/1.9, env/30))
+#   # ME between 10 and 11my from simulation start
+#   # step function-like dependence on CO2 otherwise
+# }
+# mu <- make.rate(scale, tMax = tMax, envRate = co2)
+# 
+# # its shape will vary with time and temperature
+# shape <- function(t, env) {
+#   0.5 + 2.5 * log(t + 1) / env
+# }
+# mu_shape <- make.rate(shape, tMax = tMax, envRate = temp)
+# 
+# # finally, fossil sampling will vary linearly with absolute time
+# rho <- function(t) {
+#   0.1 + 0.1 * t
+# }
+# 
+# ## plot diversification rates to visualize
+# # time vector
+# time <- seq(0, tMax, by = 0.01)
+# 
+# # plotting lambda, mu scale, and mu shape
+# plot(time, rev(lambda(time)), type = "l", xlim = c(tMax, 0), ylim = c(0, 2),
+#      xlab = "Time (Mya)", ylab = "Rate value",
+#      main = "Speciation rate, extinction scale and shape through time",
+#      col = "orange")
+# lines(time, rev(1/mu(time)), col = "red")
+# lines(time, rev(mu_shape(time)), col = "blue")
+# legend(x = 15, y = 0.7, lty = 1, col = c("orange", "red", "blue"),
+#        legend = c("lambda", "1/(mu scale)", "mu shape"))
+# # note we plotted the inverse of scale, since Weibull scales are
+# # equivalent to exponential rates when shape is equal to 1
+# 
+# ## simulate
+# # birth-death simulation
+# sim <- suppressMessages(bd.sim(n0, lambda, mu, tMax, mShape = mu_shape))
+# 
+# # fossil record simulation - returning true sampling times
+# fossils <- suppressMessages(sample.clade(sim, rho, tMax, returnTrue = TRUE))
+# 
+# # draw BD simulation with fossils
+# draw.sim(sim, fossils = fossils, showLabel = FALSE)
+# 
+# # draw phylogenetic tree
+# ape::plot.phylo(make.phylo(sim), show.tip.label = FALSE)
+
+## -----------------------------------------------------------------------------
+# set seed
+set.seed(1)
+
+# initial number of species
+n0 <- 1
+
+# number of extant species at the end of the simulation
+N <- 10
+# conditioning the simulation on the number of extant species
+# is also a new feature of version 1.1!
+
+# speciation, higher for state 1
+lambda <- c(0.1, 0.2)
+
+# extinction, higher for state 0
+mu <- c(0.06, 0.03)
+
+# number of traits and states for each--one binary trait
+nTraits <- 1
+nStates <- 2
+
+# initial value of the trait
+X0 <- 0
+
+# trait transition matrix--it's a list 
+# to allow for the case with multiple traits
+Q <- list(matrix(c(0, 0.1, 0.1, 0), nrow = 2, ncol = 2))
+
+# run simulation
+sim <- bd.sim.traits(n0, lambda, mu, N = N, nTraits = nTraits, 
+                     nStates = nStates, X0 = X0, Q = Q)
+
+# extract sim object and trait data frames
+traits <- sim$TRAITS
+sim <- sim$SIM
+
+# make phylogeny
+phy <- make.phylo(sim)
+
+# get trait values for all tips, using the new traits.summary function
+tip_traits <- traits.summary(sim, traits)$trait1
+
+# plot phylogenetic tree coloring for the trait
+ape::plot.phylo(phy, tip.color = c("red", "blue")[tip_traits + 1])
+
+## -----------------------------------------------------------------------------
+# set seed
+set.seed(1)
+
+# fossil sampling rate, higher for state 0
+rho <- c(0.5, 0.1)
+
+# run fossil sampling
+fossils <- sample.clade.traits(sim, rho, max(sim$TS), 
+                               traits, nStates = nStates)
+
+# extract fossil record (fossils$TRAITS would be the same as sim$TRAITS here)
+fossils <- fossils$FOSSILS
+
+# extract trait values for both fossils and extant species
+tip_traits <- traits.summary(sim, traits, fossils, 
+                             selection = "sampled")$trait1
+
+# we can visualize the simulation and fossils using draw.sim
+draw.sim(sim, traits, fossils, traitLegendPlacement = "bottomleft")
+
+# we can get a phylogeny including extant species and fossils, to
+# simulate a reconstructed phylogeny used in fossilized birth-death models
+phy <- make.phylo(sim, fossils, returnTrueExt = FALSE)
+# returnTrueExt being false means the tips representing the true extinction 
+# will be dropped, and the last sampled fossil will be in its place
+
+# plot phylogenetic tree coloring for the trait
+ape::plot.phylo(phy, tip.color = c("red", "blue")[tip_traits + 1])
+# here sampled ancestor fossils are represented as 0-length branches,
+# so that the tree could be used e.g. for a Beast2 analyses
+# some software prefer a degree-2 node, in which case one could set the
+# saFormat parameter of make.phylo to "node"
 
 ## -----------------------------------------------------------------------------
 # set a seed 
